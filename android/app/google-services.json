@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "362611877741",
+    "project_id": "cie-exams-viit",
+    "storage_bucket": "cie-exams-viit.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:362611877741:android:acdf057d6af0e38c099c64",
+        "android_client_info": {
+          "package_name": "com.example.cie_exam_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCLuMjcHWucAOQQouIFBAElXsWz1oVybs0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
