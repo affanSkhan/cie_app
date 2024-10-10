@@ -5,8 +5,9 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:intl/intl.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
-import 'package:url_launcher/url_launcher.dart'; // For launching URLs
+import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart'; // For more reliable URL handling
+import 'package:permission_handler/permission_handler.dart'; // Import permission_handler
 
 class StudentDashboardScreen extends StatefulWidget {
   const StudentDashboardScreen({super.key});
@@ -24,7 +25,10 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
   void initState() {
     super.initState();
 
-    // Initialize the timezone and the notification plugin
+    // Request notification permission for Android 13+
+    requestNotificationPermission();
+
+    // Initialize timezones and notification plugin
     tz.initializeTimeZones();
     const AndroidInitializationSettings initializationSettingsAndroid =
     AndroidInitializationSettings('app_icon');
@@ -37,8 +41,24 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
       onDidReceiveNotificationResponse: onDidReceiveNotificationResponse,
     );
 
+    // Listen for new exams and trigger notifications
+    listenForNewExams();
+
     // Fetch the upcoming exams stream
     examStream = getUpcomingExams();
+  }
+
+  Future<void> requestNotificationPermission() async {
+    // Request permission to show notifications
+    final status = await Permission.notification.request();
+    if (status.isGranted) {
+      print("Notification permission granted");
+    } else {
+      print("Notification permission denied");
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Permission denied to show notifications')),
+      );
+    }
   }
 
   @override
@@ -100,7 +120,8 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
 
   // Function to set up reminders using timezone package
   Future<void> setReminder(Exam exam) async {
-    final examDateTime = DateTime.parse('${exam.date} ${exam.time}');
+    // Adjust the date and time format
+    final examDateTime = DateFormat("yyyy-MM-dd hh:mm a").parse('${exam.date} ${exam.time}');
     final reminderTime = examDateTime.subtract(const Duration(minutes: 15));
 
     // Convert DateTime to TZDateTime
@@ -142,16 +163,69 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
   }
 
   // Function to open a URL (e.g., the Google Form link)
-
   Future<void> launchURL(String url) async {
-    // Check if the URL can be launched
-    if (await canLaunch(url)) {
-      await launch(url);
-    } else {
-      throw 'Could not launch $url';
+    try {
+      // Parse URL and attempt to launch
+      if (await canLaunchUrlString(url)) {
+        await launchUrlString(url);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not launch $url')),
+        );
+      }
+    } catch (e) {
+      // Catch any exceptions and print error
+      print("Error launching URL: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('An error occurred: $e')),
+      );
     }
   }
 
+  void listenForNewExams() {
+    FirebaseFirestore.instance
+        .collection('exams')
+        .snapshots()
+        .listen((snapshot) {
+      for (var docChange in snapshot.docChanges) {
+        if (docChange.type == DocumentChangeType.added) {
+          // Log the new exam details
+          print('New exam added: ${docChange.doc.data()}');
+
+          // New exam added, trigger notification
+          Exam newExam = Exam.fromFirestore(docChange.doc);
+          triggerNotification(newExam);
+        }
+      }
+    });
+  }
+
+  void triggerNotification(Exam exam) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+    AndroidNotificationDetails(
+      'new_exam_channel',  // Unique channel ID
+      'New Exam Added',  // Channel name
+      channelDescription: 'Channel for new exam notifications',  // Channel description
+      importance: Importance.max,
+      priority: Priority.high,
+      showWhen: true,
+    );
+
+    const NotificationDetails platformChannelSpecifics =
+    NotificationDetails(android: androidPlatformChannelSpecifics);
+
+    // Log when the notification is triggered
+    print('Triggering notification for exam: ${exam.subject}');
+
+    // Show the notification immediately
+    await flutterLocalNotificationsPlugin.show(
+      0,  // Notification ID
+      'New Exam Added: ${exam.subject}',  // Title
+      'Scheduled for ${exam.date} at ${exam.time}',  // Body
+      platformChannelSpecifics,
+      payload: exam.formLink,  // Pass the Google Form link in the payload
+    );
+  }
 
   // Function to fetch upcoming exams from Firestore
   Stream<List<Exam>> getUpcomingExams() {
