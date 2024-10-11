@@ -1,4 +1,3 @@
-//create_exam_screen.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart'; // To format date and time
@@ -10,11 +9,24 @@ class CreateExamScreen extends StatefulWidget {
   _CreateExamScreenState createState() => _CreateExamScreenState();
 }
 
+// Firestore collection structure for exams:
+// /exams
+// - subject: String
+// - teacherId: String
+// - classId: String
+// - examDate: Timestamp
+// - examDuration: Int (in minutes)
+// - googleFormLink: String
+// - canEdit: Bool  # Track if the teacher can edit or delete the exam
+// - lastUpdated: Timestamp  # Track the last update time
+// - status: String  # "scheduled", "completed", "canceled"
+
 class _CreateExamScreenState extends State<CreateExamScreen> {
   final TextEditingController _subjectController = TextEditingController();
   final TextEditingController _dateController = TextEditingController();
   final TextEditingController _timeController = TextEditingController();
   final TextEditingController _formLinkController = TextEditingController();
+  final TextEditingController _durationController = TextEditingController();
   bool _isLoading = false;
 
   // Function to save exam details to Firestore
@@ -23,8 +35,13 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     final date = _dateController.text.trim();
     final time = _timeController.text.trim();
     final formLink = _formLinkController.text.trim();
+    final int examDuration = int.tryParse(_durationController.text.trim()) ?? 60; // Default to 60 minutes
+    // Example teacherId and classId (these should be dynamic)
+    final String teacherId = 'teacher1'; // Replace with actual teacher ID
+    final String classId = 'classA'; // Replace with actual class ID
+    final DateTime examDate = DateFormat('yyyy-MM-dd hh:mm a').parse('$date $time');
 
-    if (subject.isEmpty || date.isEmpty || time.isEmpty || formLink.isEmpty) {
+    if (subject.isEmpty || date.isEmpty || time.isEmpty || formLink.isEmpty || examDuration == 0) {
       // Show an error message if any field is empty
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill in all fields')),
@@ -37,17 +54,32 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     });
 
     try {
-      await FirebaseFirestore.instance.collection('exams').add({
-        'subject': subject,
-        'date': date,
-        'time': time,
-        'formLink': formLink,
-        'createdAt': DateTime.now(),
-      });
+      // Check for exam clash
+      bool clashExists = await isExamClashing(classId, examDate, Duration(minutes: examDuration));
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Exam created successfully!')),
-      );
+      if (clashExists) {
+        // Show a message about the clash
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Exam cannot be scheduled due to a clash with another exam.')),
+        );
+      } else {
+        // If no clash exists, save the exam
+        await FirebaseFirestore.instance.collection('exams').add({
+          'subject': subject,
+          'teacherId': teacherId,
+          'classId': classId,
+          'examDate': Timestamp.fromDate(examDate),
+          'examDuration': examDuration,
+          'googleFormLink': formLink,
+          'canEdit': true,
+          'lastUpdated': FieldValue.serverTimestamp(),
+          'status': 'scheduled',
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Exam created successfully!')),
+        );
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error creating exam: $e')),
@@ -57,6 +89,28 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  // Function to check for exam clashes
+  Future<bool> isExamClashing(String classId, DateTime newExamDate, Duration examDuration) async {
+    QuerySnapshot query = await FirebaseFirestore.instance
+        .collection('exams')
+        .where('classId', isEqualTo: classId)
+        .where('status', isEqualTo: 'scheduled')
+        .get();
+
+    for (var doc in query.docs) {
+      var examData = doc.data() as Map<String, dynamic>;
+      DateTime existingExamDate = (examData['examDate'] as Timestamp).toDate();
+      Duration existingDuration = Duration(minutes: examData['examDuration']);
+
+      // Check if the new exam overlaps with an existing one
+      if (newExamDate.isBefore(existingExamDate.add(existingDuration)) &&
+          newExamDate.add(examDuration).isAfter(existingExamDate)) {
+        return true;  // Exam clashes
+      }
+    }
+    return false;  // No clash
   }
 
   // Function to show Date Picker
@@ -95,6 +149,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     _dateController.dispose();
     _timeController.dispose();
     _formLinkController.dispose();
+    _durationController.dispose();
     super.dispose();
   }
 
@@ -123,6 +178,11 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
               readOnly: true, // Makes the field read-only
               onTap: () => _selectTime(context), // Opens time picker when tapped
               decoration: const InputDecoration(labelText: 'Exam Time'),
+            ),
+            TextField(
+              controller: _durationController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Exam Duration (minutes)'),
             ),
             TextField(
               controller: _formLinkController,

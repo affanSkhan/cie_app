@@ -7,7 +7,10 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart'; // For more reliable URL handling
-import 'package:permission_handler/permission_handler.dart'; // Import permission_handler
+import 'package:permission_handler/permission_handler.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart'; // Add this if using alarms
+
+import 'main.dart'; // Import permission_handler
 
 class StudentDashboardScreen extends StatefulWidget {
   const StudentDashboardScreen({super.key});
@@ -56,7 +59,8 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
     } else {
       print("Notification permission denied");
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Permission denied to show notifications')),
+        const SnackBar(
+            content: Text('Permission denied to show notifications')),
       );
     }
   }
@@ -66,6 +70,15 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Upcoming Exams'),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              signOut(context); // Call the sign-out function
+            },
+            child: const Text('Sign Out'),
+          ),
+          const SizedBox(width: 8), // Add spacing
+        ],
       ),
       body: StreamBuilder<List<Exam>>(
         stream: examStream,
@@ -89,18 +102,20 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
                 child: ListTile(
                   title: Text(exam.subject),
                   subtitle: Text(
-                      'Date: ${exam.date}\nTime: ${exam.time}\nGoogle Form: ${exam.formLink}'),
+                    'Date: ${DateFormat.yMMMd().format(exam.date)}\n'
+                        'Time: ${DateFormat.jm().format(exam.date)}\n'
+                        'Google Form: ${exam.formLink}',
+                  ),
                   trailing: IconButton(
                     icon: const Icon(Icons.alarm),
                     onPressed: () {
-                      setReminder(exam);
+                      print("Alarm icon clicked!");
+                      setReminder(exam); // Set a reminder for the exam
                     },
                   ),
                   onTap: () {
-                    // Check if the form link is not null or empty
-                    if (exam.formLink != null && exam.formLink.isNotEmpty) {
-                      // Launch the Google Form link when tapped
-                      launchURL(exam.formLink);
+                    if (exam.formLink.isNotEmpty) {
+                      launchURL(exam.formLink); // Launch Google Form if the link is valid
                     } else {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -118,40 +133,59 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
     );
   }
 
+
   // Function to set up reminders using timezone package
   Future<void> setReminder(Exam exam) async {
-    // Adjust the date and time format
-    final examDateTime = DateFormat("yyyy-MM-dd hh:mm a").parse('${exam.date} ${exam.time}');
-    final reminderTime = examDateTime.subtract(const Duration(minutes: 15));
+    try {
+      // Ensure that the exam date is not null
+      if (exam.date == null) {
+        print("Exam date is null for ${exam.subject}. Cannot set reminder.");
+        return; // Exit if the date is null
+      }
 
-    // Convert DateTime to TZDateTime
-    final tz.TZDateTime tzReminderTime = tz.TZDateTime.from(reminderTime, tz.local);
+      final examDateTime = exam.date;
+      final reminderTime = examDateTime.subtract(const Duration(minutes: 15));
 
-    // Android notification details
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
-    AndroidNotificationDetails(
-      'exam_reminder_channel',
-      'Exam Reminders',
-      importance: Importance.max,
-      priority: Priority.high,
-      showWhen: true,
-    );
+      // Ensure reminder time is in the future
+      if (reminderTime.isBefore(DateTime.now())) {
+        print("Reminder time for ${exam.subject} is in the past. Cannot set reminder.");
+        return; // Exit if reminder time is in the past
+      }
 
-    const NotificationDetails platformChannelSpecifics =
-    NotificationDetails(android: androidPlatformChannelSpecifics);
+      // Log the reminder time
+      print("Reminder time for ${exam.subject}: $reminderTime");
 
-    await flutterLocalNotificationsPlugin.zonedSchedule(
-      0, // Notification ID
-      'Upcoming Exam: ${exam.subject}',
-      'Your exam starts at ${exam.time}',
-      tzReminderTime,
-      platformChannelSpecifics,
-      androidAllowWhileIdle: true,
-      uiLocalNotificationDateInterpretation:
-      UILocalNotificationDateInterpretation.absoluteTime,
-      payload: exam.formLink, // Payload contains the exam's Google Form link
-    );
+      // Schedule notification using the actual reminder time
+      const AndroidNotificationDetails androidPlatformChannelSpecifics =
+      AndroidNotificationDetails(
+        'exam_reminder_channel',
+        'Exam Reminders',
+        importance: Importance.max,
+        priority: Priority.high,
+        showWhen: true,
+      );
+
+      const NotificationDetails platformChannelSpecifics =
+      NotificationDetails(android: androidPlatformChannelSpecifics);
+
+      // Use an integer ID for notification; for example, the hash code of the ID string
+      await flutterLocalNotificationsPlugin.zonedSchedule(
+        exam.id.hashCode, // Unique ID derived from the exam ID
+        'Upcoming Exam: ${exam.subject}',
+        'Your exam starts at ${DateFormat.jm().format(examDateTime)}',
+        tz.TZDateTime.from(reminderTime, tz.local),
+        platformChannelSpecifics,
+        androidAllowWhileIdle: true,
+        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+      );
+
+      print("Reminder set for ${exam.subject} at $reminderTime");
+
+    } catch (e) {
+      print("Error setting reminder: $e");
+    }
   }
+
 
   // Function to handle notification tap
   Future<void> onDidReceiveNotificationResponse(
@@ -201,11 +235,14 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
   }
 
   void triggerNotification(Exam exam) async {
+    // Unique notification ID for each exam to avoid overriding
+    int notificationId = exam.hashCode; // Using the exam's hash code as a unique ID
+
     const AndroidNotificationDetails androidPlatformChannelSpecifics =
     AndroidNotificationDetails(
-      'new_exam_channel',  // Unique channel ID
-      'New Exam Added',  // Channel name
-      channelDescription: 'Channel for new exam notifications',  // Channel description
+      'new_exam_channel', // Unique channel ID
+      'New Exam Added', // Channel name
+      channelDescription: 'Channel for new exam notifications', // Channel description
       importance: Importance.max,
       priority: Priority.high,
       showWhen: true,
@@ -219,27 +256,42 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
 
     // Show the notification immediately
     await flutterLocalNotificationsPlugin.show(
-      0,  // Notification ID
-      'New Exam Added: ${exam.subject}',  // Title
-      'Scheduled for ${exam.date} at ${exam.time}',  // Body
+      notificationId, // Use a unique notification ID
+      'New Exam Added: ${exam.subject}', // Title
+      'Scheduled for ${DateFormat.yMMMd().format(exam.date)} at ${DateFormat.jm().format(exam.date)}', // Body (date and time)
       platformChannelSpecifics,
-      payload: exam.formLink,  // Pass the Google Form link in the payload
+      payload: exam.formLink, // Pass the Google Form link in the payload
     );
   }
 
+
   // Function to fetch upcoming exams from Firestore
   Stream<List<Exam>> getUpcomingExams() {
-    // Get the current date (today's date) with time set to midnight
-    DateTime startOfToday = DateTime.now();
-    DateTime endOfToday =
-    DateTime(startOfToday.year, startOfToday.month, startOfToday.day, 23, 59, 59);
+    // Get the current time (to fetch future exams)
+    DateTime now = DateTime.now();
 
     return FirebaseFirestore.instance
         .collection('exams')
-        .where('date', isGreaterThanOrEqualTo: DateFormat('yyyy-MM-dd').format(startOfToday)) // Include today
-        .where('date', isLessThanOrEqualTo: DateFormat('yyyy-MM-dd').format(endOfToday)) // Optional: Include exams up until the end of today
+        .where('examDate',
+        isGreaterThanOrEqualTo: now) // Compare with current date/time
         .snapshots()
         .map((snapshot) =>
         snapshot.docs.map((doc) => Exam.fromFirestore(doc)).toList());
   }
 }
+
+// Stream<List<Exam>> getUpcomingExams() {
+//   // Get the current date (today's date) with time set to midnight
+//   DateTime startOfToday = DateTime.now();
+//   DateTime endOfToday =
+//   DateTime(startOfToday.year, startOfToday.month, startOfToday.day, 23, 59, 59);
+//
+//   return FirebaseFirestore.instance
+//       .collection('exams')
+//       .where('date', isGreaterThanOrEqualTo: DateFormat('yyyy-MM-dd').format(startOfToday)) // Include today
+//       .where('date', isLessThanOrEqualTo: DateFormat('yyyy-MM-dd').format(endOfToday)) // Optional: Include exams up until the end of today
+//       .snapshots()
+//       .map((snapshot) =>
+//       snapshot.docs.map((doc) => Exam.fromFirestore(doc)).toList());
+// }
+// }

@@ -9,103 +9,108 @@ import 'dart:io';
 import 'student_dashboard.dart';
 import 'teacher_dashboard.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await _initializeNotifications();
   await Firebase.initializeApp();
-  await FCMService().setupFirebase(); // Initialize FCM
-  _createNotificationChannel(); // Create notification channel
-  await _requestPermission(); // Request notification permission
-  runApp(const MyApp());
-  FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-  String? token = await messaging.getToken();
-  print("FCM Token: $token"); // Use this token for testing
+  // Initialize notification and Firebase setup
+  final fcmService = FCMService();
+  await fcmService.setupFirebase(); // Initialize FCM
+  await _initializeNotifications();
+  await _requestPermission();
+
+  // Check if the user is logged in
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+  final bool isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
+
+  runApp(MyApp(isLoggedIn: isLoggedIn));
+}
+
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // Handle background messages here
+  print('Handling a background message: ${message.messageId}');
+}
+
+// Function to request permission
+Future<void> _requestPermission() async {
+  FirebaseMessaging messaging = FirebaseMessaging.instance;
+  NotificationSettings settings = await messaging.requestPermission(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+  if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+    print('User granted permission');
+  } else if (settings.authorizationStatus == AuthorizationStatus.provisional) {
+    print('User granted provisional permission');
+  } else {
+    print('User declined or has not accepted permission');
+  }
 }
 
 Future<void> _initializeNotifications() async {
+  const AndroidInitializationSettings initializationSettingsAndroid =
+  AndroidInitializationSettings('@mipmap/ic_launcher');
+  const InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+  );
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
   FlutterLocalNotificationsPlugin();
-
-  // Initialization settings for Android
-  const AndroidInitializationSettings initializationSettingsAndroid =
-  AndroidInitializationSettings('app_icon'); // Add an app icon
-
-  // Combine initialization settings
-  const InitializationSettings initializationSettings =
-  InitializationSettings(android: initializationSettingsAndroid);
-
-  // Initialize plugin with platform-specific settings
   await flutterLocalNotificationsPlugin.initialize(
     initializationSettings,
-    onDidReceiveNotificationResponse: onDidReceiveNotificationResponse, // Handle when notification is clicked
+    onDidReceiveNotificationResponse: (NotificationResponse response) {
+      print('Notification Clicked: ${response.payload}');
+      // Handle notification click here
+    },
   );
 }
 
-// Function to handle notification tap
-void onDidReceiveNotificationResponse(NotificationResponse response) {
-  final String? payload = response.payload;
-  if (payload != null) {
-    launchUrl(payload as Uri); // Use URL launcher to open the Google Form link
-  }
-}
-
-
-
-
-
-
-void _createNotificationChannel() {
-  if (Platform.isAndroid) {
-    const channel = AndroidNotificationChannel(
-      'your_channel_id', // id
-      'Your Channel Name', // name
-      importance: Importance.high,
-    );
-
-    final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-    flutterLocalNotificationsPlugin
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
-  }
-}
-
-
-
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final bool isLoggedIn;
 
-
+  const MyApp({super.key, required this.isLoggedIn});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'CIE Exam App',
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: const SignInScreen(),
+      home: isLoggedIn ? const StudentDashboardScreen() : const SignInScreen(),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
-Future<void> _requestPermission() async {
-  if (Platform.isAndroid) {
-    FirebaseMessaging messaging = FirebaseMessaging.instance;
-    NotificationSettings settings = await messaging.requestPermission(
-      alert: true,
-      announcement: false,
-      badge: true,
-      carPlay: false,
-      criticalAlert: false,
-      provisional: false,
-      sound: true,
-    );
 
-    print('User granted permission: ${settings.authorizationStatus}');
-  }
+Future<void> signOut(BuildContext context) async {
+final SharedPreferences prefs = await SharedPreferences.getInstance();
+await prefs.clear(); // Clear all stored preferences
+
+Navigator.pushReplacement(
+context,
+MaterialPageRoute(builder: (context) => const SignInScreen()),
+); // Redirect to sign-in screen
 }
+
+// Future<void> _requestPermission() async {
+// if (Platform.isAndroid) {
+// FirebaseMessaging messaging = FirebaseMessaging.instance;
+// NotificationSettings settings = await messaging.requestPermission(
+// alert: true,
+// announcement: false,
+// badge: true,
+// carPlay: false,
+// criticalAlert: false,
+// provisional: false,
+// sound: true,
+// );
+//
+// print('User granted permission: ${settings.authorizationStatus}');
+// }
+// }
+
 
 
 
@@ -164,6 +169,11 @@ class _SignInScreenState extends State<SignInScreen> {
       DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(userCredential.user?.uid).get();
       String userRole = userDoc['role'];
 
+      // Store login state in SharedPreferences
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isLoggedIn', true);
+      await prefs.setString('userEmail', _emailController.text); // Store email if needed
+
       // Navigate based on role
       if (userRole == 'student') {
         Navigator.pushReplacement(
@@ -173,7 +183,7 @@ class _SignInScreenState extends State<SignInScreen> {
       } else if (userRole == 'teacher') {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => const TeacherDashboardScreen()),
+          MaterialPageRoute(builder: (context) => TeacherDashboardScreen()),
         );
       }
     } catch (e) {
@@ -183,6 +193,7 @@ class _SignInScreenState extends State<SignInScreen> {
       });
     }
   }
+
 
   @override
   void dispose() {

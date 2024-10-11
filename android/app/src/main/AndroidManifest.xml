@@ -4,6 +4,9 @@
     <!-- Add permission to allow the app to access the internet -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.VIBRATE"/>
 
     <application
         android:enableOnBackInvokedCallback="true"
@@ -30,11 +33,15 @@
             </intent-filter>
 
             <!-- Intent filter to handle http and https URLs -->
-            <intent-filter>
+            <intent-filter tools:ignore="ExtraText">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http"/>
+                <data
+                    android:host="TODO"
+                    tools:ignore="AppLinkUrlError" /> <!-- Replace with your actual host -->
+                android:scheme="http"
+                tools:ignore="AppLinkUrlError" />
                 <data android:scheme="https"/>
             </intent-filter>
         </activity>
