@@ -94,29 +94,6 @@ MaterialPageRoute(builder: (context) => const SignInScreen()),
 ); // Redirect to sign-in screen
 }
 
-// Future<void> _requestPermission() async {
-// if (Platform.isAndroid) {
-// FirebaseMessaging messaging = FirebaseMessaging.instance;
-// NotificationSettings settings = await messaging.requestPermission(
-// alert: true,
-// announcement: false,
-// badge: true,
-// carPlay: false,
-// criticalAlert: false,
-// provisional: false,
-// sound: true,
-// );
-//
-// print('User granted permission: ${settings.authorizationStatus}');
-// }
-// }
-
-
-
-
-// ... (rest of your code)
-
-
 bool _isValidEmail(String email) {
   return RegExp(r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9]+\.[a-zA-Z]+")
       .hasMatch(email);
@@ -270,6 +247,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final TextEditingController _confirmPasswordController = TextEditingController();
   String? _errorMessage;
   String? _selectedRole = "student"; // Default role
+  String? _selectedClassId = "FY"; // Default class
+  String? _selectedDivision = "A"; // Default division
   bool _isLoading = false;
 
   Future<void> _signUp() async {
@@ -311,16 +290,18 @@ class _SignUpScreenState extends State<SignUpScreen> {
         password: _passwordController.text,
       );
 
-      // Add user to Firestore with role
+      // Add user to Firestore with role, class, and division
       await FirebaseFirestore.instance.collection('users').doc(userCredential.user?.uid).set({
         'email': _emailController.text.trim(),
         'role': _selectedRole,
+        'classId': _selectedClassId,
+        'division': _selectedDivision,
       });
 
-      // Navigate to home screen
+      // Navigate to sign-in screen after sign-up
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => const MyHomePage(title: 'Home Page')),
+        MaterialPageRoute(builder: (context) => const SignInScreen()), // Replace with your SignIn screen widget
       );
     } on FirebaseAuthException catch (e) {
       setState(() {
@@ -360,68 +341,105 @@ class _SignUpScreenState extends State<SignUpScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("Sign Up")),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            TextField(
-              controller: _emailController,
-              decoration: const InputDecoration(labelText: "Email"),
-            ),
-            TextField(
-              controller: _passwordController,
-              decoration: const InputDecoration(labelText: "Password"),
-              obscureText: true,
-            ),
-            TextField(
-              controller: _confirmPasswordController,
-              decoration: const InputDecoration(labelText: "Confirm Password"),
-              obscureText: true,
-            ),
-
-            // ... other text fields
-            DropdownButton<String>(
-              value: _selectedRole,
-              onChanged: (String? newValue) {
-                setState(() {
-                  _selectedRole = newValue!;
-                });
-              },
-              items: <String>['student', 'teacher']
-                  .map<DropdownMenuItem<String>>((String value) {
-                return DropdownMenuItem<String>(
-                  value: value,
-                  child: Text(value),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 20),
-            _isLoading
-                ? const CircularProgressIndicator()
-                : ElevatedButton(
-              onPressed: _signUp,
-              child: const Text("Sign Up"),
-            ),
-            if (_errorMessage != null)
-              Text(
-                _errorMessage!,
-                style: const TextStyle(color: Colors.red),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              TextField(
+                controller: _emailController,
+                decoration: const InputDecoration(labelText: "Email"),
               ),
-            TextButton(
-              onPressed: () {
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const SignInScreen()),
-                );
-              },
-              child: const Text("Already have an account? Sign In"),
-            ),
-          ],
+              TextField(
+                controller: _passwordController,
+                decoration: const InputDecoration(labelText: "Password"),
+                obscureText: true,
+              ),
+              TextField(
+                controller: _confirmPasswordController,
+                decoration: const InputDecoration(labelText: "Confirm Password"),
+                obscureText: true,
+              ),
+              DropdownButton<String>(
+                value: _selectedRole,
+                onChanged: (String? newValue) {
+                  setState(() {
+                    _selectedRole = newValue!;
+                  });
+                },
+                items: <String>['student', 'teacher']
+                    .map<DropdownMenuItem<String>>((String value) {
+                  return DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value),
+                  );
+                }).toList(),
+              ),
+              // Class selection dropdown
+              DropdownButton<String>(
+                value: _selectedClassId,
+                onChanged: (String? newValue) {
+                  setState(() {
+                    _selectedClassId = newValue!;
+                  });
+                },
+                items: <String>['FY', 'SY', 'TY', 'BTECH']
+                    .map<DropdownMenuItem<String>>((String value) {
+                  return DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value),
+                  );
+                }).toList(),
+              ),
+              // Division selection dropdown
+              DropdownButton<String>(
+                value: _selectedDivision,
+                onChanged: (String? newValue) {
+                  setState(() {
+                    _selectedDivision = newValue!;
+                  });
+                },
+                items: <String>['A', 'B', 'C', 'D']
+                    .map<DropdownMenuItem<String>>((String value) {
+                  return DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 20),
+              _isLoading
+                  ? const CircularProgressIndicator()
+                  : ElevatedButton(
+                onPressed: _signUp,
+                child: const Text("Sign Up"),
+              ),
+              if (_errorMessage != null)
+                Text(
+                  _errorMessage!,
+                  style: const TextStyle(color: Colors.red),
+                ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(builder: (context) => const SignInScreen()),
+                  );
+                },
+                child: const Text("Already have an account? Sign In"),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+
+  bool _isValidEmail(String email) {
+    return RegExp(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").hasMatch(email);
+  }
 }
+
 
 class PasswordResetScreen extends StatelessWidget {
   final FirebaseAuth _auth = FirebaseAuth.instance;

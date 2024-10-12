@@ -1,3 +1,4 @@
+//teacher_dashboard.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -36,16 +37,17 @@ class TeacherDashboardScreen extends StatelessWidget {
     );
   }
 
-  // Function to fetch existing exams from Firestore
-  Stream<List<Exam>> fetchExams(String classId) {
+  // Function to fetch existing exams from Firestore based on class and divisions
+  Stream<List<Exam>> fetchExams(String classId, List<String> divisions) {
+    DateTime now = DateTime.now();
     return FirebaseFirestore.instance
         .collection('exams')
-        .where('classId', isEqualTo: classId)
-        .where('status', isEqualTo: 'scheduled')
+        .where('examDate', isGreaterThanOrEqualTo: Timestamp.fromDate(now)) // Filter by date
+        .where('classId', isEqualTo: classId) // Match classId
+        .where('division', whereIn: divisions) // Multiple divisions
+        .where('status', isEqualTo: 'scheduled') // Match only scheduled exams
         .snapshots()
-        .map((snapshot) => snapshot.docs
-        .map((doc) => Exam.fromFirestore(doc))
-        .toList());
+        .map((snapshot) => snapshot.docs.map((doc) => Exam.fromFirestore(doc)).toList());
   }
 
   // Function to delete an exam
@@ -53,11 +55,28 @@ class TeacherDashboardScreen extends StatelessWidget {
     await FirebaseFirestore.instance.collection('exams').doc(examId).delete();
   }
 
+  // Function to check for exam clashes
+  Future<bool> isExamClashing(String classId, List<String> divisions, DateTime examDate) async {
+    QuerySnapshot snapshot = await FirebaseFirestore.instance
+        .collection('exams')
+        .where('classId', isEqualTo: classId)
+        .where('divisions', arrayContainsAny: divisions)
+        .where('examDate', isEqualTo: examDate)
+        .where('status', isEqualTo: 'scheduled')
+        .get();
+
+    return snapshot.docs.isNotEmpty;
+  }
+
   // Function to show edit dialog
   Future<void> _showEditDialog(BuildContext context, Exam exam) async {
     final subjectController = TextEditingController(text: exam.subject);
     final durationController = TextEditingController(text: exam.duration.toString());
     DateTime selectedDateTime = exam.date;
+
+    // UI for selecting class and divisions
+    String selectedClass = exam.classId;
+    List<String> selectedDivisions = exam.divisions;
 
     await showDialog(
       context: context,
@@ -140,6 +159,8 @@ class TeacherDashboardScreen extends StatelessWidget {
                     'subject': subjectController.text,
                     'duration': int.parse(durationController.text),
                     'examDate': selectedDateTime,
+                    'classId': selectedClass,
+                    'divisions': selectedDivisions,
                   });
                   Navigator.of(context).pop(); // Close the dialog
                 }
@@ -158,10 +179,10 @@ class TeacherDashboardScreen extends StatelessWidget {
     );
   }
 
-
   @override
   Widget build(BuildContext context) {
-    final String classId = 'classA'; // Replace with actual class ID
+    final String classId = 'FY'; // Replace with actual class ID
+    final List<String> divisions = ['A', 'B']; // Replace with actual divisions
 
     return Scaffold(
       appBar: AppBar(
@@ -197,7 +218,7 @@ class TeacherDashboardScreen extends StatelessWidget {
             const SizedBox(height: 10),
             Expanded(
               child: StreamBuilder<List<Exam>>(
-                stream: fetchExams(classId),
+                stream: fetchExams(classId, divisions),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const CircularProgressIndicator();

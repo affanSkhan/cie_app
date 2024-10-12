@@ -9,25 +9,18 @@ class CreateExamScreen extends StatefulWidget {
   _CreateExamScreenState createState() => _CreateExamScreenState();
 }
 
-// Firestore collection structure for exams:
-// /exams
-// - subject: String
-// - teacherId: String
-// - classId: String
-// - examDate: Timestamp
-// - examDuration: Int (in minutes)
-// - googleFormLink: String
-// - canEdit: Bool  # Track if the teacher can edit or delete the exam
-// - lastUpdated: Timestamp  # Track the last update time
-// - status: String  # "scheduled", "completed", "canceled"
-
 class _CreateExamScreenState extends State<CreateExamScreen> {
   final TextEditingController _subjectController = TextEditingController();
   final TextEditingController _dateController = TextEditingController();
   final TextEditingController _timeController = TextEditingController();
   final TextEditingController _formLinkController = TextEditingController();
   final TextEditingController _durationController = TextEditingController();
+
   bool _isLoading = false;
+
+  // For class dropdown and division checkboxes
+  String selectedClass = 'FY'; // Default class
+  List<String> selectedDivisions = ['A']; // Default division
 
   // Function to save exam details to Firestore
   Future<void> saveExamDetails() async {
@@ -35,13 +28,12 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     final date = _dateController.text.trim();
     final time = _timeController.text.trim();
     final formLink = _formLinkController.text.trim();
+    final classId = selectedClass;
+    final List<String> divisions = selectedDivisions; // No need to join as a string
     final int examDuration = int.tryParse(_durationController.text.trim()) ?? 60; // Default to 60 minutes
-    // Example teacherId and classId (these should be dynamic)
-    final String teacherId = 'teacher1'; // Replace with actual teacher ID
-    final String classId = 'classA'; // Replace with actual class ID
     final DateTime examDate = DateFormat('yyyy-MM-dd hh:mm a').parse('$date $time');
 
-    if (subject.isEmpty || date.isEmpty || time.isEmpty || formLink.isEmpty || examDuration == 0) {
+    if (subject.isEmpty || date.isEmpty || time.isEmpty || formLink.isEmpty || classId.isEmpty || selectedDivisions.isEmpty) {
       // Show an error message if any field is empty
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill in all fields')),
@@ -55,7 +47,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
 
     try {
       // Check for exam clash
-      bool clashExists = await isExamClashing(classId, examDate, Duration(minutes: examDuration));
+      bool clashExists = await isExamClashing(classId, divisions, examDate, Duration(minutes: examDuration));
 
       if (clashExists) {
         // Show a message about the clash
@@ -64,10 +56,11 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
         );
       } else {
         // If no clash exists, save the exam
+
         await FirebaseFirestore.instance.collection('exams').add({
           'subject': subject,
-          'teacherId': teacherId,
           'classId': classId,
+          'division': divisions, // Store division as an array
           'examDate': Timestamp.fromDate(examDate),
           'examDuration': examDuration,
           'googleFormLink': formLink,
@@ -76,9 +69,17 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
           'status': 'scheduled',
         });
 
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Exam created successfully!')),
         );
+
+        // Clear the form after successful submission
+        _subjectController.clear();
+        _dateController.clear();
+        _timeController.clear();
+        _formLinkController.clear();
+        _durationController.clear();
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -92,10 +93,12 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
   }
 
   // Function to check for exam clashes
-  Future<bool> isExamClashing(String classId, DateTime newExamDate, Duration examDuration) async {
+  // Function to check for exam clashes
+  Future<bool> isExamClashing(String classId, List<String> divisions, DateTime newExamDate, Duration examDuration) async {
     QuerySnapshot query = await FirebaseFirestore.instance
         .collection('exams')
         .where('classId', isEqualTo: classId)
+        .where('division', arrayContainsAny: divisions) // Check for any division clashes
         .where('status', isEqualTo: 'scheduled')
         .get();
 
@@ -159,43 +162,86 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
       appBar: AppBar(
         title: const Text('Create New Exam'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            TextField(
-              controller: _subjectController,
-              decoration: const InputDecoration(labelText: 'Subject Name'),
-            ),
-            TextField(
-              controller: _dateController,
-              readOnly: true, // Makes the field read-only
-              onTap: () => _selectDate(context), // Opens date picker when tapped
-              decoration: const InputDecoration(labelText: 'Exam Date'),
-            ),
-            TextField(
-              controller: _timeController,
-              readOnly: true, // Makes the field read-only
-              onTap: () => _selectTime(context), // Opens time picker when tapped
-              decoration: const InputDecoration(labelText: 'Exam Time'),
-            ),
-            TextField(
-              controller: _durationController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Exam Duration (minutes)'),
-            ),
-            TextField(
-              controller: _formLinkController,
-              decoration: const InputDecoration(labelText: 'Google Form Link'),
-            ),
-            const SizedBox(height: 20),
-            _isLoading
-                ? const CircularProgressIndicator()
-                : ElevatedButton(
-              onPressed: saveExamDetails,
-              child: const Text('Save Exam'),
-            ),
-          ],
+      body: SingleChildScrollView( // Make the content scrollable
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              TextField(
+                controller: _subjectController,
+                decoration: const InputDecoration(labelText: 'Subject Name'),
+              ),
+
+              // Class Dropdown
+              InputDecorator(
+                decoration: const InputDecoration(labelText: 'Class'),
+                child: DropdownButton<String>(
+                  value: selectedClass,
+                  items: ['FY', 'SY', 'TY', 'BTECH'].map((classId) {
+                    return DropdownMenuItem(
+                      value: classId,
+                      child: Text(classId),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    setState(() {
+                      selectedClass = value!;
+                    });
+                  },
+                  isExpanded: true, // Makes dropdown take full width
+                  underline: Container(), // Removes default underline
+                ),
+              ),
+
+              // Division Checkboxes
+              Wrap(
+                children: ['A', 'B', 'C', 'D'].map((division) {
+                  return CheckboxListTile(
+                    title: Text(division),
+                    value: selectedDivisions.contains(division),
+                    onChanged: (bool? value) {
+                      setState(() {
+                        if (value!) {
+                          selectedDivisions.add(division);
+                        } else {
+                          selectedDivisions.remove(division);
+                        }
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+
+              TextField(
+                controller: _dateController,
+                readOnly: true, // Makes the field read-only
+                onTap: () => _selectDate(context), // Opens date picker when tapped
+                decoration: const InputDecoration(labelText: 'Exam Date'),
+              ),
+              TextField(
+                controller: _timeController,
+                readOnly: true, // Makes the field read-only
+                onTap: () => _selectTime(context), // Opens time picker when tapped
+                decoration: const InputDecoration(labelText: 'Exam Time'),
+              ),
+              TextField(
+                controller: _durationController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Exam Duration (minutes)'),
+              ),
+              TextField(
+                controller: _formLinkController,
+                decoration: const InputDecoration(labelText: 'Google Form Link'),
+              ),
+              const SizedBox(height: 20),
+              _isLoading
+                  ? const CircularProgressIndicator()
+                  : ElevatedButton(
+                onPressed: saveExamDetails,
+                child: const Text('Save Exam'),
+              ),
+            ],
+          ),
         ),
       ),
     );
