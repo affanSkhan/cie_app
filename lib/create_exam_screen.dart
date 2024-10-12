@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart'; // To format date and time
+import 'package:firebase_auth/firebase_auth.dart'; // To get the logged-in teacher
 
 class CreateExamScreen extends StatefulWidget {
   const CreateExamScreen({super.key});
@@ -29,14 +30,14 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     final time = _timeController.text.trim();
     final formLink = _formLinkController.text.trim();
     final classId = selectedClass;
-    final List<String> divisions = selectedDivisions; // No need to join as a string
+    final List<String> divisions = selectedDivisions;
     final int examDuration = int.tryParse(_durationController.text.trim()) ?? 60; // Default to 60 minutes
     final DateTime examDate = DateFormat('yyyy-MM-dd hh:mm a').parse('$date $time');
 
-    if (subject.isEmpty || date.isEmpty || time.isEmpty || formLink.isEmpty || classId.isEmpty || selectedDivisions.isEmpty) {
-      // Show an error message if any field is empty
+    // Validate form inputs
+    if (subject.isEmpty || date.isEmpty || time.isEmpty || formLink.isEmpty || classId.isEmpty || divisions.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill in all fields')),
+        const SnackBar(content: Text('Please fill in all fields, including selecting a division')),
       );
       return;
     }
@@ -46,40 +47,39 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     });
 
     try {
-      // Check for exam clash
+      final User? user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Error: No teacher logged in')),
+        );
+        return;
+      }
+
       bool clashExists = await isExamClashing(classId, divisions, examDate, Duration(minutes: examDuration));
 
       if (clashExists) {
-        // Show a message about the clash
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Exam cannot be scheduled due to a clash with another exam.')),
+          const SnackBar(content: Text('Exam clash detected. Please choose a different time.')),
         );
       } else {
-        // If no clash exists, save the exam
-
         await FirebaseFirestore.instance.collection('exams').add({
           'subject': subject,
           'classId': classId,
-          'division': divisions, // Store division as an array
+          'division': divisions,
           'examDate': Timestamp.fromDate(examDate),
           'examDuration': examDuration,
           'googleFormLink': formLink,
           'canEdit': true,
           'lastUpdated': FieldValue.serverTimestamp(),
           'status': 'scheduled',
+          'teacherId': user.uid,
         });
-
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Exam created successfully!')),
         );
 
-        // Clear the form after successful submission
-        _subjectController.clear();
-        _dateController.clear();
-        _timeController.clear();
-        _formLinkController.clear();
-        _durationController.clear();
+        _clearForm();
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -92,13 +92,24 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     }
   }
 
-  // Function to check for exam clashes
-  // Function to check for exam clashes
+  // Clear the form after submission
+  void _clearForm() {
+    _subjectController.clear();
+    _dateController.clear();
+    _timeController.clear();
+    _formLinkController.clear();
+    _durationController.clear();
+    setState(() {
+      selectedDivisions = ['A']; // Reset division selection
+      selectedClass = 'FY'; // Reset class selection
+    });
+  }
+
   Future<bool> isExamClashing(String classId, List<String> divisions, DateTime newExamDate, Duration examDuration) async {
     QuerySnapshot query = await FirebaseFirestore.instance
         .collection('exams')
         .where('classId', isEqualTo: classId)
-        .where('division', arrayContainsAny: divisions) // Check for any division clashes
+        .where('division', arrayContainsAny: divisions)
         .where('status', isEqualTo: 'scheduled')
         .get();
 
@@ -107,7 +118,6 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
       DateTime existingExamDate = (examData['examDate'] as Timestamp).toDate();
       Duration existingDuration = Duration(minutes: examData['examDuration']);
 
-      // Check if the new exam overlaps with an existing one
       if (newExamDate.isBefore(existingExamDate.add(existingDuration)) &&
           newExamDate.add(examDuration).isAfter(existingExamDate)) {
         return true;  // Exam clashes
@@ -116,13 +126,12 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     return false;  // No clash
   }
 
-  // Function to show Date Picker
   Future<void> _selectDate(BuildContext context) async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: DateTime.now(), // default to today's date
-      firstDate: DateTime(2020), // earliest date to select
-      lastDate: DateTime(2100),  // latest date to select
+      initialDate: DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
     );
     if (picked != null) {
       setState(() {
@@ -131,17 +140,16 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     }
   }
 
-  // Function to show Time Picker
   Future<void> _selectTime(BuildContext context) async {
     final TimeOfDay? picked = await showTimePicker(
       context: context,
-      initialTime: TimeOfDay.now(), // default to current time
+      initialTime: TimeOfDay.now(),
     );
     if (picked != null) {
+      final now = DateTime.now();
+      final dt = DateTime(now.year, now.month, now.day, picked.hour, picked.minute);
       setState(() {
-        final now = DateTime.now();
-        final dt = DateTime(now.year, now.month, now.day, picked.hour, picked.minute);
-        _timeController.text = DateFormat('hh:mm a').format(dt); // Formats to 12-hour time
+        _timeController.text = DateFormat('hh:mm a').format(dt);
       });
     }
   }
@@ -162,7 +170,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
       appBar: AppBar(
         title: const Text('Create New Exam'),
       ),
-      body: SingleChildScrollView( // Make the content scrollable
+      body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
@@ -172,7 +180,6 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
                 decoration: const InputDecoration(labelText: 'Subject Name'),
               ),
 
-              // Class Dropdown
               InputDecorator(
                 decoration: const InputDecoration(labelText: 'Class'),
                 child: DropdownButton<String>(
@@ -188,12 +195,11 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
                       selectedClass = value!;
                     });
                   },
-                  isExpanded: true, // Makes dropdown take full width
-                  underline: Container(), // Removes default underline
+                  isExpanded: true,
+                  underline: Container(),
                 ),
               ),
 
-              // Division Checkboxes
               Wrap(
                 children: ['A', 'B', 'C', 'D'].map((division) {
                   return CheckboxListTile(
@@ -214,14 +220,14 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
 
               TextField(
                 controller: _dateController,
-                readOnly: true, // Makes the field read-only
-                onTap: () => _selectDate(context), // Opens date picker when tapped
+                readOnly: true,
+                onTap: () => _selectDate(context),
                 decoration: const InputDecoration(labelText: 'Exam Date'),
               ),
               TextField(
                 controller: _timeController,
-                readOnly: true, // Makes the field read-only
-                onTap: () => _selectTime(context), // Opens time picker when tapped
+                readOnly: true,
+                onTap: () => _selectTime(context),
                 decoration: const InputDecoration(labelText: 'Exam Time'),
               ),
               TextField(
@@ -237,7 +243,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
               _isLoading
                   ? const CircularProgressIndicator()
                   : ElevatedButton(
-                onPressed: saveExamDetails,
+                onPressed: _isLoading ? null : saveExamDetails,
                 child: const Text('Save Exam'),
               ),
             ],
