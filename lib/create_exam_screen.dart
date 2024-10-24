@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart'; // To format date and time
-import 'package:firebase_auth/firebase_auth.dart'; // To get the logged-in teacher
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:convert';
+import 'package:googleapis_auth/auth_io.dart';
+
 
 class CreateExamScreen extends StatefulWidget {
   const CreateExamScreen({super.key});
@@ -15,15 +19,16 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
   final TextEditingController _dateController = TextEditingController();
   final TextEditingController _timeController = TextEditingController();
   final TextEditingController _formLinkController = TextEditingController();
-  final TextEditingController _durationController = TextEditingController();
+  final TextEditingController _durationController = TextEditingController(text: "60");
+  final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _bodyController = TextEditingController();
+  final List<String> _selectedDivisions = ['A', 'B'];
 
   bool _isLoading = false;
 
-  // For class dropdown and division checkboxes
-  String selectedClass = 'FY'; // Default class
-  List<String> selectedDivisions = ['A']; // Default division
+  String selectedClass = 'FY';
+  List<String> selectedDivisions = ['A'];
 
-  // Function to save exam details to Firestore
   Future<void> saveExamDetails() async {
     final subject = _subjectController.text.trim();
     final date = _dateController.text.trim();
@@ -31,13 +36,19 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     final formLink = _formLinkController.text.trim();
     final classId = selectedClass;
     final List<String> divisions = selectedDivisions;
-    final int examDuration = int.tryParse(_durationController.text.trim()) ?? 60; // Default to 60 minutes
+    final int examDuration = int.tryParse(_durationController.text.trim()) ?? 60;
     final DateTime examDate = DateFormat('yyyy-MM-dd hh:mm a').parse('$date $time');
 
-    // Validate form inputs
     if (subject.isEmpty || date.isEmpty || time.isEmpty || formLink.isEmpty || classId.isEmpty || divisions.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill in all fields, including selecting a division')),
+      );
+      return;
+    }
+
+    if (examDuration <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Duration must be a positive number')),
       );
       return;
     }
@@ -80,6 +91,8 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
         );
 
         _clearForm();
+
+        sendFCMNotification(subject, 'You have an upcoming exam', classId, divisions);
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -92,16 +105,14 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
     }
   }
 
-  // Clear the form after submission
   void _clearForm() {
     _subjectController.clear();
     _dateController.clear();
     _timeController.clear();
     _formLinkController.clear();
-    _durationController.clear();
     setState(() {
-      selectedDivisions = ['A']; // Reset division selection
-      selectedClass = 'FY'; // Reset class selection
+      selectedDivisions = ['A'];
+      selectedClass = 'FY';
     });
   }
 
@@ -120,10 +131,10 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
 
       if (newExamDate.isBefore(existingExamDate.add(existingDuration)) &&
           newExamDate.add(examDuration).isAfter(existingExamDate)) {
-        return true;  // Exam clashes
+        return true;
       }
     }
-    return false;  // No clash
+    return false;
   }
 
   Future<void> _selectDate(BuildContext context) async {
@@ -179,7 +190,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
                 controller: _subjectController,
                 decoration: const InputDecoration(labelText: 'Subject Name'),
               ),
-
+              const SizedBox(height: 10),
               InputDecorator(
                 decoration: const InputDecoration(labelText: 'Class'),
                 child: DropdownButton<String>(
@@ -199,7 +210,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
                   underline: Container(),
                 ),
               ),
-
+              const SizedBox(height: 10),
               Wrap(
                 children: ['A', 'B', 'C', 'D'].map((division) {
                   return CheckboxListTile(
@@ -217,7 +228,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
                   );
                 }).toList(),
               ),
-
+              const SizedBox(height: 10),
               TextField(
                 controller: _dateController,
                 readOnly: true,
@@ -233,7 +244,7 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
               TextField(
                 controller: _durationController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Exam Duration (minutes)'),
+                decoration: const InputDecoration(labelText: 'Duration (minutes)'),
               ),
               TextField(
                 controller: _formLinkController,
@@ -243,13 +254,61 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
               _isLoading
                   ? const CircularProgressIndicator()
                   : ElevatedButton(
-                onPressed: _isLoading ? null : saveExamDetails,
-                child: const Text('Save Exam'),
+                onPressed: saveExamDetails,
+                child: const Text('Create Exam'),
               ),
             ],
           ),
         ),
       ),
     );
+  }
+}
+
+Future<void> sendFCMNotification(String title, String body, String classId, List<String> divisions) async {
+  try {
+    // Load the service account JSON file from assets
+    final serviceAccountJsonString = await rootBundle.loadString('assets/cie-exams-viit-eb74a001b9fc.json');
+    final serviceAccountJson = json.decode(serviceAccountJsonString);
+
+    // Create an authenticated client
+    final client = await clientViaServiceAccount(
+      ServiceAccountCredentials.fromJson(serviceAccountJson),
+      ['https://www.googleapis.com/auth/firebase.messaging'],
+    );
+
+    // Get the project ID from the service account JSON
+    final projectId = serviceAccountJson['project_id'];
+    final url = 'https://fcm.googleapis.com/v1/projects/$projectId/messages:send';
+
+    // Send notification to both class and division topics
+    for (String division in divisions) {
+      final response = await client.post(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'message': {
+            'condition': "'class_$classId' in topics && 'division_$division' in topics",
+            'notification': {
+              'title': title,
+              'body': body,
+            },
+          },
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        print('Notification successfully sent to class $classId and division $division');
+      } else {
+        print('Failed to send notification: ${response.statusCode} - ${response.body}');
+      }
+    }
+
+    // Close the client when done
+    client.close();
+  } catch (e) {
+    print('Error sending FCM notification: $e');
   }
 }

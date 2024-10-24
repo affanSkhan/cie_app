@@ -3,13 +3,33 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:intl/intl.dart';
-import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:url_launcher/url_launcher_string.dart'; // For URL handling
-import 'package:permission_handler/permission_handler.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
+import 'package:flutter/services.dart';
+import 'package:awesome_notifications/awesome_notifications.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'main.dart';
+
+void subscribeToTopics(String classId, String division) {
+  FirebaseMessaging firebaseMessaging = FirebaseMessaging.instance;
+
+  // Subscribe to class and division topics
+  firebaseMessaging.subscribeToTopic('class_$classId');
+  firebaseMessaging.subscribeToTopic('division_$division');
+
+  print('Subscribed to class_$classId and division_$division topics');
+}
+
+
+void unsubscribeFromTopics(String? classId, String? division) {
+  if (classId != null && division != null) {
+    FirebaseMessaging.instance.unsubscribeFromTopic('class_$classId');
+    FirebaseMessaging.instance.unsubscribeFromTopic('division_$division');
+    print('Unsubscribed from topics class_$classId and division_$division');
+  }
+}
+
 
 class StudentDashboardScreen extends StatefulWidget {
   const StudentDashboardScreen({super.key});
@@ -21,25 +41,42 @@ class StudentDashboardScreen extends StatefulWidget {
 class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
   String? _classId;
   String? _division;
-  String? _userId = FirebaseAuth.instance.currentUser?.uid;
+  final String? _userId = FirebaseAuth.instance.currentUser?.uid;
   Stream<List<Exam>>? examStream;
   FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
   FlutterLocalNotificationsPlugin();
+  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
 
   @override
   void initState() {
     super.initState();
-    requestNotificationPermission();
-    tz.initializeTimeZones();
-    initializeNotifications();
     _getClassAndDivision();
+    requestNotificationPermission();
+   // initializeAwesomeNotifications();
+    tz.initializeTimeZones();
+   // initializeNotifications();
+    configureFirebaseMessaging();
   }
 
-  // Initialize notification plugin
+  void initializeAwesomeNotifications() {
+    AwesomeNotifications().initialize(
+      'resource://drawable/app_icon', // App icon
+      [
+        NotificationChannel(
+          channelKey: 'scheduled_channel',
+          channelName: 'Scheduled Notifications',
+          channelDescription: 'Notification channel for scheduled exams',
+          defaultColor: Colors.blue,
+          ledColor: Colors.white,
+          importance: NotificationImportance.High,
+        ),
+      ],
+    );
+  }
+
   void initializeNotifications() {
     const AndroidInitializationSettings initializationSettingsAndroid =
     AndroidInitializationSettings('app_icon');
-
     const InitializationSettings initializationSettings =
     InitializationSettings(android: initializationSettingsAndroid);
 
@@ -50,20 +87,48 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
   }
 
   Future<void> requestNotificationPermission() async {
-    final status = await Permission.notification.request();
-    if (status.isGranted) {
-      print("Notification permission granted");
-    } else {
-      print("Notification permission denied");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Permission denied to show notifications'),
-        ),
-      );
-    }
+    await AwesomeNotifications().isNotificationAllowed().then((isAllowed) {
+      if (!isAllowed) {
+        AwesomeNotifications().requestPermissionToSendNotifications();
+      }
+    });
   }
 
-  // Fetch the student's class and division from Firestore
+  // Firebase Cloud Messaging setup for receiving notifications
+  void configureFirebaseMessaging() {
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      if (message.notification != null) {
+        showNotification(message.notification!.title, message.notification!.body);
+      }
+    });
+
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      if (message.notification != null) {
+        // Handle notification tap
+      }
+    });
+  }
+
+  Future<void> showNotification(String? title, String? body) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+    AndroidNotificationDetails(
+      'scheduled_channel',
+      'Scheduled Notifications',
+      importance: Importance.max,
+      priority: Priority.high,
+      showWhen: false,
+    );
+    const NotificationDetails platformChannelSpecifics =
+    NotificationDetails(android: androidPlatformChannelSpecifics);
+    await flutterLocalNotificationsPlugin.show(
+      0,
+      title,
+      body,
+      platformChannelSpecifics,
+      payload: 'item x',
+    );
+  }
+
   Future<void> _getClassAndDivision() async {
     if (_userId != null) {
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
@@ -72,37 +137,46 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
           .get();
 
       if (userDoc.exists) {
+        String? newClassId = userDoc['classId'];
+        String? newDivision = userDoc['division'];
+
+        // Unsubscribe from previous topics if they exist
+        if (_classId != null && _division != null) {
+          unsubscribeFromTopics(_classId, _division);
+        }
+
+        // Update state with new class and division
         setState(() {
-          _classId = userDoc['classId'];
-          _division = userDoc['division'];
+          _classId = newClassId;
+          _division = newDivision;
         });
 
-        print('Fetched ClassId: $_classId, Division: $_division');
+        // Subscribe to new class and division topics
+        if (_classId != null && _division != null) {
+          subscribeToTopics(_classId!, _division!);
+        }
 
-        // Fetch the exams only after classId and division are fetched
-        examStream = getUpcomingExamsForStudent(_classId!, _division!);
+        // Update the exam stream for new class and division
+        if (_classId != null && _division != null) {
+          examStream = getUpcomingExamsForStudent(_classId!, _division!);
+        }
       }
     }
   }
 
-  // Fetch upcoming exams based on the student's class and division
   Stream<List<Exam>> getUpcomingExamsForStudent(String classId, String division) {
-    DateTime startOfToday = DateTime.now();
+    DateTime now = DateTime.now();
+    DateTime startOfToday = DateTime(now.year, now.month, now.day);
 
     return FirebaseFirestore.instance
         .collection('exams')
         .where('classId', isEqualTo: classId)
         .where('division', arrayContains: division)
         .where('status', isEqualTo: 'scheduled')
-        .where('examDate', isGreaterThanOrEqualTo: startOfToday)
+        .where('examDate', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfToday))
         .orderBy('examDate', descending: false)
         .snapshots()
         .map((snapshot) {
-      if (snapshot.docs.isEmpty) {
-        print('No exams found for class: $classId, division: $division');
-      } else {
-        print('Exams found: ${snapshot.docs.length}');
-      }
       return snapshot.docs.map((doc) => Exam.fromFirestore(doc)).toList();
     });
   }
@@ -152,12 +226,12 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
                   trailing: IconButton(
                     icon: const Icon(Icons.alarm),
                     onPressed: () {
-                      setReminder(exam); // Set a reminder for the exam
+                      setReminder(context, exam);
                     },
                   ),
                   onTap: () {
                     if (exam.examLink.isNotEmpty) {
-                      launchURL(exam.examLink); // Launch Google Form link
+                      launchURL(exam.examLink);
                     } else {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -172,61 +246,89 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
           );
         },
       )
-
           : const Center(
         child: CircularProgressIndicator(),
       ),
     );
   }
 
-  // Function to set reminders
-  Future<void> setReminder(Exam exam) async {
-    if (exam.date == null) return;
+  static const platform = MethodChannel('exam_reminder_channel');
 
-    final reminderTime = exam.date.subtract(const Duration(minutes: 15));
-    if (reminderTime.isBefore(DateTime.now())) return;
+  Future<void> setReminder(BuildContext context, Exam exam) async {
+    int? minutesBeforeExam = await _showTimeInputDialog(context);
+    if (minutesBeforeExam == null || minutesBeforeExam <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid number of minutes!')),
+      );
+      return;
+    }
 
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
-    AndroidNotificationDetails(
-      'exam_reminder_channel',
-      'Exam Reminders',
-      importance: Importance.max,
-      priority: Priority.high,
-      showWhen: true,
+    final DateTime reminderTime = exam.date.subtract(Duration(minutes: minutesBeforeExam));
+    if (reminderTime.isBefore(DateTime.now())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Reminder time must be in the future!')),
+      );
+      return;
+    }
+
+    AwesomeNotifications().createNotification(
+      content: NotificationContent(
+        id: exam.hashCode,
+        channelKey: 'scheduled_channel',
+        title: 'Reminder for ${exam.subject}',
+        body:
+        'Your exam is scheduled for ${DateFormat.yMMMd().format(exam.date)} at ${DateFormat.jm().format(exam.date)}',
+        notificationLayout: NotificationLayout.Default,
+      ),
+      schedule: NotificationCalendar.fromDate(date: reminderTime),
     );
 
-    const NotificationDetails platformChannelSpecifics =
-    NotificationDetails(android: androidPlatformChannelSpecifics);
-
-    await flutterLocalNotificationsPlugin.zonedSchedule(
-      exam.id.hashCode, // Unique ID
-      'Upcoming Exam: ${exam.subject}',
-      'Your exam starts at ${DateFormat.jm().format(exam.date)}',
-      tz.TZDateTime.from(reminderTime, tz.local),
-      platformChannelSpecifics,
-      androidAllowWhileIdle: true,
-      uiLocalNotificationDateInterpretation:
-      UILocalNotificationDateInterpretation.absoluteTime,
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Reminder set successfully!')),
     );
   }
 
-  // Function to handle notification tap
+  Future<int?> _showTimeInputDialog(BuildContext context) async {
+    final TextEditingController controller = TextEditingController();
+    return showDialog<int>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Set Reminder'),
+          content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              hintText: 'Enter minutes before exam',
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () {
+                final minutesBefore = int.tryParse(controller.text);
+                Navigator.of(context).pop(minutesBefore);
+              },
+              child: const Text('Set'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> onDidReceiveNotificationResponse(
       NotificationResponse response) async {
-    final String? payload = response.payload;
+    String? payload = response.payload;
     if (payload != null) {
       launchURL(payload);
     }
   }
 
-  // Function to launch URL
   Future<void> launchURL(String url) async {
     if (await canLaunchUrlString(url)) {
       await launchUrlString(url);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not launch $url')),
-      );
+      throw 'Could not launch $url';
     }
   }
 
@@ -258,4 +360,3 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen> {
     );
   }
 }
-

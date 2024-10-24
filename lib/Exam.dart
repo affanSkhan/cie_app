@@ -5,11 +5,11 @@ class Exam {
   final String classId; // Class ID like FY, SY, etc.
   final List<String> divisions; // Array of divisions like A, B, etc.
   final String subject;
-  final int duration;
-  final DateTime date; // Keep this as 'date' for consistency with the parameter
-  final String examLink;
-  final String status;
-  final String teacherId; // Field to store which teacher created the exam
+  final int duration; // Duration in minutes
+  final DateTime date; // Exam date
+  final String examLink; // Link to the Google Form for the exam
+  final String status; // Status of the exam
+  final String teacherId; // ID of the teacher who created the exam
 
   Exam({
     required this.id,
@@ -17,25 +17,31 @@ class Exam {
     required this.divisions,
     required this.subject,
     required this.duration,
-    required this.date, // Keep this as 'date' for consistency with the parameter
+    required this.date,
     required this.examLink,
     required this.status,
-    required this.teacherId, // Teacher who created the exam
+    required this.teacherId,
   });
 
   // Factory method to create an Exam object from Firestore data
   factory Exam.fromFirestore(DocumentSnapshot doc) {
-    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+    Map<String, dynamic>? data = doc.data() as Map<String, dynamic>?;
+
+    // Check for null data and handle accordingly
+    if (data == null) {
+      throw Exception('Document data is null');
+    }
+
     return Exam(
       id: doc.id,
-      classId: data['classId'],
-      divisions: List<String>.from(data['division'] ?? []), // Adjust to use 'division' as in Firestore
-      subject: data['subject'],
-      duration: data['examDuration'] ?? 0, // Provide default value for duration if missing
+      classId: data['classId'] ?? '', // Provide a default if missing
+      divisions: List<String>.from(data['division'] ?? []), // Fetch divisions
+      subject: data['subject'] ?? '', // Provide default value for subject if missing
+      duration: (data['examDuration'] is int) ? data['examDuration'] : 0, // Ensure duration is an int
       date: (data['examDate'] as Timestamp).toDate(),
-      examLink: data['googleFormLink'] ?? '', // Provide default value for link if missing
-      status: data['status'] ?? '', // Provide default value for status if missing
-      teacherId: data['teacherId'] ?? '', // Ensure teacherId field is fetched and provided default value if missing
+      examLink: data['googleFormLink'] ?? '', // Default link if missing
+      status: data['status'] ?? '', // Default status if missing
+      teacherId: data['teacherId'] ?? '', // Default teacherId if missing
     );
   }
 
@@ -45,11 +51,11 @@ class Exam {
       'classId': classId,
       'division': divisions, // Store as 'division' to match Firestore
       'subject': subject,
-      'duration': duration,
-      'examDate': date, // Ensure this matches with the 'fromFirestore' method
+      'examDuration': duration, // Ensure this matches Firestore field name
+      'examDate': Timestamp.fromDate(date), // Convert DateTime to Timestamp
       'googleFormLink': examLink,
       'status': status,
-      'teacherId': teacherId, // Include teacherId when saving the exam
+      'teacherId': teacherId,
     };
   }
 }

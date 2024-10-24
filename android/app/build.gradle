@@ -16,21 +16,15 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
-        // This should be moved to the android block for better compatibility
     }
-     // Add the compiler args directly under the android block
-    tasks.withType(JavaCompile) {
-        options.compilerArgs += ['-Xlint:deprecation']
-    }
-
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8
+        jvmTarget = "1.8"
     }
 
     defaultConfig {
         applicationId = "com.example.cie_exam_app"
-        minSdk = 23  // Update this line
+        minSdk = 23  // Ensuring compatibility with API level 23+
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -38,8 +32,12 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.debug
+            signingConfig = signingConfigs.debug // Ensure this is correct, it may need to point to release signing config in production
         }
+    }
+
+    tasks.withType(JavaCompile) {
+        options.compilerArgs += ['-Xlint:deprecation'] // Add deprecation warnings
     }
 }
 

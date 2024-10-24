@@ -1,9 +1,11 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'Exam.dart';
 import 'create_exam_screen.dart';
 import 'main.dart';
+
 
 class TeacherDashboardScreen extends StatelessWidget {
   const TeacherDashboardScreen({super.key});
@@ -39,11 +41,13 @@ class TeacherDashboardScreen extends StatelessWidget {
   // Function to fetch exams based on the signed-in teacher's ID
   Stream<List<Exam>> fetchExamsForTeacher(String teacherId) {
     DateTime now = DateTime.now();
+    DateTime startOfToday = DateTime(now.year, now.month, now.day); // Midnight of the current day
+
     print('Fetching exams for teacherId: $teacherId');
 
     return FirebaseFirestore.instance
         .collection('exams')
-        .where('examDate', isGreaterThanOrEqualTo: Timestamp.fromDate(now))
+        .where('examDate', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfToday))
         .where('teacherId', isEqualTo: teacherId)
         .where('status', isEqualTo: 'scheduled')
         .orderBy('examDate', descending: false) // Order by upcoming exams
@@ -88,9 +92,10 @@ class TeacherDashboardScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Date: ${DateFormat.yMMMd().format(selectedDateTime)}'),
+                    Expanded(
+                      child: Text('Date: ${DateFormat.yMMMd().format(selectedDateTime)}'),
+                    ),
                     ElevatedButton(
                       onPressed: () async {
                         DateTime? newDate = await showDatePicker(
@@ -115,9 +120,10 @@ class TeacherDashboardScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Time: ${DateFormat.jm().format(selectedDateTime)}'),
+                    Expanded(
+                      child: Text('Time: ${DateFormat.jm().format(selectedDateTime)}'),
+                    ),
                     ElevatedButton(
                       onPressed: () async {
                         TimeOfDay? newTime = await showTimePicker(
@@ -169,7 +175,13 @@ class TeacherDashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String teacherId = 'lwwUDv7YAwR6pDR5mXYJ92Ocr1s1'; // Replace with actual teacher ID
+    // Get the signed-in teacher's user ID
+    User? currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      return const Center(child: Text('No teacher is signed in.'));
+    }
+
+    String teacherId = currentUser.uid; // Fetch the current teacher's ID from Firebase Auth
 
     return Scaffold(
       appBar: AppBar(
@@ -181,7 +193,7 @@ class TeacherDashboardScreen extends StatelessWidget {
             },
             child: const Text('Sign Out'),
           ),
-          const SizedBox(width: 8), // Add spacing
+          const SizedBox(width: 0), // Add spacing
         ],
       ),
       body: Center(
@@ -225,30 +237,37 @@ class TeacherDashboardScreen extends StatelessWidget {
                       final exam = exams[index];
                       return Card(
                         child: ListTile(
-                          title: Text(exam.subject),
+                          title: Text(
+                            exam.subject,
+                            overflow: TextOverflow.ellipsis, // Prevent long text from overflowing
+                          ),
                           subtitle: Text(
                             'Date: ${DateFormat.yMMMd().format(exam.date)}\n'
                                 'Duration: ${exam.duration} minutes\n'
                                 'Status: ${exam.status}',
+                            overflow: TextOverflow.ellipsis, // Prevent subtitle overflow
                           ),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (value) {
-                              if (value == 'edit') {
-                                _showEditDialog(context, exam); // Show edit dialog
-                              } else if (value == 'delete') {
-                                _showDeleteConfirmation(context, exam.id); // Show delete confirmation
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              const PopupMenuItem(
-                                value: 'edit',
-                                child: Text('Edit'),
-                              ),
-                              const PopupMenuItem(
-                                value: 'delete',
-                                child: Text('Delete'),
-                              ),
-                            ],
+                          trailing: SizedBox(
+                            width: 50, // Adjust this to control the width of the popup button
+                            child: PopupMenuButton<String>(
+                              onSelected: (value) {
+                                if (value == 'edit') {
+                                  _showEditDialog(context, exam); // Show edit dialog
+                                } else if (value == 'delete') {
+                                  _showDeleteConfirmation(context, exam.id); // Show delete confirmation
+                                }
+                              },
+                              itemBuilder: (context) => [
+                                const PopupMenuItem(
+                                  value: 'edit',
+                                  child: Text('Edit'),
+                                ),
+                                const PopupMenuItem(
+                                  value: 'delete',
+                                  child: Text('Delete'),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       );

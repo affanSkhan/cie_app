@@ -1,25 +1,105 @@
-import 'package:cie_exam_app/fcmservice.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'dart:io';
 import 'student_dashboard.dart';
 import 'teacher_dashboard.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:timezone/data/latest.dart' as tz;
+import 'firebase_options.dart';
+import 'package:rxdart/rxdart.dart';
+import 'package:awesome_notifications/awesome_notifications.dart';
+
+
+// Used to pass messages from event handler to the UI
+final _messageStreamController = BehaviorSubject<RemoteMessage>();
+
+// Initialize Flutter Local Notifications Plugin
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+FlutterLocalNotificationsPlugin();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
 
-  // Initialize notification and Firebase setup
-  final fcmService = FCMService();
-  await fcmService.setupFirebase(); // Initialize FCM
-  await _initializeNotifications();
-  await _requestPermission();
+  // Initialize Awesome Notifications
+  AwesomeNotifications().initialize(
+    'resource://drawable/app_icon', // Add your app icon path here
+    [
+      NotificationChannel(
+        channelKey: 'scheduled_channel',
+        channelName: 'Scheduled Notifications',
+        channelDescription: 'Notification channel for scheduled exams',
+        defaultColor: Colors.blue,
+        ledColor: Colors.white,
+        importance: NotificationImportance.High,
+      ),
+    ],
+  );
+
+  tz.initializeTimeZones(); // Initialize time zone data
+
+  // Initialize Firebase
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    print("Firebase initialization error: $e");
+  }
+
+  if (!kIsWeb) {
+    // Initialize Android Alarm Manager
+    await AndroidAlarmManager.initialize();
+    tz.initializeTimeZones();
+  }
+
+  // Request FCM permission for iOS devices
+  final messaging = FirebaseMessaging.instance;
+  final settings = await messaging.requestPermission(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+
+  if (kDebugMode) {
+    print('Permission granted: ${settings.authorizationStatus}');
+  }
+
+  // Retrieve FCM registration token
+  String? token;
+  if (DefaultFirebaseOptions.currentPlatform == DefaultFirebaseOptions.web) {
+    const vapidKey = "YOUR_VAPID_KEY_HERE";
+    token = await messaging.getToken(vapidKey: vapidKey);
+  } else {
+    token = await messaging.getToken();
+  }
+
+  if (kDebugMode) {
+    print('FCM Registration Token=$token');
+  }
+
+  // Set up FCM background message handler
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // Initialize Flutter Local Notifications Plugin
+  const AndroidInitializationSettings initializationSettingsAndroid =
+  AndroidInitializationSettings('@mipmap/ic_launcher');
+  const InitializationSettings initializationSettings =
+  InitializationSettings(android: initializationSettingsAndroid);
+  await flutterLocalNotificationsPlugin.initialize(
+    initializationSettings,
+    onDidReceiveNotificationResponse: (NotificationResponse response) {
+      print('Notification Clicked: ${response.payload}');
+      // Handle notification click
+    },
+  );
+
+  // final fcmService = FCMService();
+  // await fcmService.setupFirebase(); // Initialize FCM
 
   // Check if the user is logged in
   final SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -28,70 +108,86 @@ Future<void> main() async {
   runApp(MyApp(isLoggedIn: isLoggedIn));
 }
 
+// Background FCM message handler
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  // Handle background messages here
   print('Handling a background message: ${message.messageId}');
 }
 
-// Function to request permission
-Future<void> _requestPermission() async {
-  FirebaseMessaging messaging = FirebaseMessaging.instance;
-  NotificationSettings settings = await messaging.requestPermission(
-    alert: true,
-    badge: true,
-    sound: true,
-  );
-  if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-    print('User granted permission');
-  } else if (settings.authorizationStatus == AuthorizationStatus.provisional) {
-    print('User granted provisional permission');
-  } else {
-    print('User declined or has not accepted permission');
-  }
-}
-
-Future<void> _initializeNotifications() async {
-  const AndroidInitializationSettings initializationSettingsAndroid =
-  AndroidInitializationSettings('@mipmap/ic_launcher');
-  const InitializationSettings initializationSettings = InitializationSettings(
-    android: initializationSettingsAndroid,
-  );
-  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-  FlutterLocalNotificationsPlugin();
-  await flutterLocalNotificationsPlugin.initialize(
-    initializationSettings,
-    onDidReceiveNotificationResponse: (NotificationResponse response) {
-      print('Notification Clicked: ${response.payload}');
-      // Handle notification click here
-    },
-  );
-}
-
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   final bool isLoggedIn;
 
   const MyApp({super.key, required this.isLoggedIn});
+
+  @override
+  _MyAppState createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  @override
+  void initState() {
+    super.initState();
+
+    // Listen to FCM messages when the app is in the foreground
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      RemoteNotification? notification = message.notification;
+      if (notification != null) {
+        showNotification(notification.title, notification.body);
+      }
+    });
+
+    // Listen for messages when the app is opened from the background
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      print('A notification was opened from the background.');
+    });
+
+    // Handle background/terminated state with Flutter Local Notifications
+  }
+
+  // Show notification
+  void showNotification(String? title, String? body) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+    AndroidNotificationDetails(
+      'exam_reminder_channel', // Channel ID for exam reminders
+      'Exam Notifications',
+      channelDescription: 'Notifications for exam reminders',
+      importance: Importance.max,
+      priority: Priority.high,
+      ticker: 'ticker',
+    );
+    const NotificationDetails platformChannelSpecifics =
+    NotificationDetails(android: androidPlatformChannelSpecifics);
+
+    await flutterLocalNotificationsPlugin.show(
+      0, // Notification ID
+      title,
+      body,
+      platformChannelSpecifics,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'CIE Exam App',
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: isLoggedIn ? const StudentDashboardScreen() : const SignInScreen(),
+      home: widget.isLoggedIn
+          ? const StudentDashboardScreen()
+          : const SignInScreen(),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
 
-Future<void> signOut(BuildContext context) async {
-final SharedPreferences prefs = await SharedPreferences.getInstance();
-await prefs.clear(); // Clear all stored preferences
 
-Navigator.pushReplacement(
-context,
-MaterialPageRoute(builder: (context) => const SignInScreen()),
-); // Redirect to sign-in screen
+Future<void> signOut(BuildContext context) async {
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+  await prefs.clear(); // Clear all stored preferences
+
+  Navigator.pushReplacement(
+    context,
+    MaterialPageRoute(builder: (context) => const SignInScreen()),
+  ); // Redirect to sign-in screen
 }
 
 bool _isValidEmail(String email) {
@@ -160,7 +256,7 @@ class _SignInScreenState extends State<SignInScreen> {
       } else if (userRole == 'teacher') {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => TeacherDashboardScreen()),
+          MaterialPageRoute(builder: (context) => const TeacherDashboardScreen()),
         );
       }
     } catch (e) {
